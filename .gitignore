@@ -43,6 +43,30 @@ conda-meta/
 envs/
 pkgs/
 
+# ML / model artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.h5
+*.pkl
+*.npy
+*.npz
+wandb/
+outputs/
+logs/
+runs/
+
+# Large data files
+*.csv
+*.parquet
+*.json
+*.jsonl
+*.tsv
+*.zip
+*.tar.gz
+
 # Environment variables
 *.env
 .env.*
