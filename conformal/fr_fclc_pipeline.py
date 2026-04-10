@@ -233,11 +233,11 @@ def plot_coverage_comparison(results: Dict, n_clients: int):
     ax.set_xticks(x + width * 1.5)
     ax.set_xticklabels([f"C{i}" for i in range(n_clients)])
     ax.set_ylim(0, 1.15)
-    ax.legend(fontsize=9, loc="upper right", bbox_to_anchor=(1.0, 1.13),
-              ncol=5, framealpha=0.9)
+    ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(0.0, -0.15),
+              ncol=5, framealpha=0.9, bbox_transform=ax.transAxes, borderaxespad=0)
     plt.tight_layout()
     path = os.path.join(PLOTS_DIR, "coverage_comparison.png")
-    plt.savefig(path, dpi=150)
+    plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Plot saved → {path}")
 
@@ -272,11 +272,11 @@ def plot_coverage_gap(results: Dict):
     ax.set_xticks(x + width * 1.5)
     ax.set_xticklabels(s_labels)
     ax.set_ylim(0, max(0.5, ax.get_ylim()[1]) * 1.25)
-    ax.legend(fontsize=9, loc="upper right", bbox_to_anchor=(1.0, 1.13),
-              ncol=5, framealpha=0.9)
+    ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(0.0, -0.15),
+              ncol=5, framealpha=0.9, bbox_transform=ax.transAxes, borderaxespad=0)
     plt.tight_layout()
     path = os.path.join(PLOTS_DIR, "coverage_gap.png")
-    plt.savefig(path, dpi=150)
+    plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Plot saved → {path}")
 
