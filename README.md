@@ -4,7 +4,7 @@
 
 **Course:** Distributed AI — Spring 2026  
 **Author:** Mirenge Innocent  
-**Status:** Phase 4 of 6 complete — Robust aggregation and fairness-aware calibration implemented and verified  
+**Status:** Phase 5 of 6 complete — Full evaluation across 5 seeds, Byzantine robustness sweep, and statistical significance tests complete
 
 ---
 
@@ -13,8 +13,9 @@
 FR-FCLC is a post-hoc calibration framework for federated LLMs. It computes
 Adaptive Prediction Set (APS) scores locally on each federated client and
 aggregates them at the server to produce a global conformal threshold with
-statistical coverage guarantees. Later phases extend this with Byzantine-robust
-trimmed quantile aggregation and fairness-aware per-group threshold adjustment.
+statistical coverage guarantees. Byzantine-robust trimmed quantile aggregation
+and fairness-aware per-group threshold adjustment are the core contributions,
+validated across 10 clients, 3 settings, and 5 random seeds.
 
 ---
 
@@ -58,7 +59,7 @@ fr-fclc/
 ├── federated/
 │   ├── fl_client.py           # Flower NumPyClient: local training + APS scoring
 │   ├── fl_server.py           # Custom FedAvg strategy with score aggregation
-│   ├── fl_simulation.py       # Flower run_simulation entry point
+│   ├── fl_simulation.py       # Sequential load-once simulation (memory-safe)
 │   └── __init__.py
 ├── conformal/                 # Phase 4: robust + fair aggregation (complete)
 │   ├── aps_scores.py
@@ -67,20 +68,26 @@ fr-fclc/
 │   ├── fair_threshold.py      # Per-client fairness-aware threshold adjustment
 │   ├── fr_fclc_pipeline.py    # Full integrated pipeline: all 4 methods × 3 settings
 │   └── __init__.py
-├── experiments/               # Phase 5: full evaluation scripts (upcoming)
-│   ├── byzantine_simulation.py
-│   ├── run_all.py
-│   ├── stats_analysis.py
+├── experiments/               # Phase 5: full evaluation (complete)
+│   ├── run_all.py             # 4 methods × 3 settings × 5 seeds
+│   ├── byzantine_simulation.py # Robustness sweep: 0%–50% corruption
+│   ├── stats_analysis.py      # Paired t-tests: FR-FCLC vs baselines
 │   └── __init__.py
 ├── plots/                     # Generated figures
 │   ├── boolq_client_distribution.png
-│   ├── coverage_comparison.png    # Per-client coverage: all 4 methods (honest)
-│   └── coverage_gap.png           # Coverage gap: all methods × all settings
+│   ├── coverage_comparison.png        # Per-client coverage: all 4 methods (honest)
+│   ├── coverage_gap.png               # Coverage gap: all methods × all settings
+│   ├── byzantine_robustness_inflate.png  # Coverage vs Byzantine fraction (inflate)
+│   └── byzantine_robustness_deflate.png  # Coverage vs Byzantine fraction (deflate)
 ├── results/                   # Simulation outputs (JSON)
 │   ├── boolq_thresholds.json          # Naive global threshold per round
 │   ├── boolq_client_scores.json       # Per-client APS scores from simulation
 │   ├── fair_thresholds.json           # Per-client FR-FCLC thresholds
-│   └── fr_fclc_results.json           # Full pipeline results: all methods × settings
+│   ├── fr_fclc_results.json           # Full pipeline results: all methods × settings
+│   ├── run_all_results.json           # Per-seed results: 5 seeds × 4 methods × 3 settings
+│   ├── run_all_summary.json           # Aggregated mean ± std across seeds
+│   ├── byzantine_results.json         # Robustness sweep: 0%–50% corruption
+│   └── stats_analysis.json            # Paired t-test results
 ├── debug_tokenizer.py         # Tokenizer diagnostic script
 ├── requirements.txt
 └── README.md
@@ -93,7 +100,7 @@ fr-fclc/
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/minnocent12/fr-fclc.git
 cd fr-fclc
 ```
 
@@ -176,10 +183,6 @@ BoolQ uses label-based Dirichlet split. TruthfulQA uses random split
 | `MIN_SAMPLES` | 10 | Warn if any client has fewer samples |
 | `MERGE_TINY` | False | Merge tiny clients into largest (use with α=0.5) |
 
-> **Note on scaling:** For Phase 5 experiments (100 clients, α=0.5),
-> set `MERGE_TINY=True` to prevent empty clients. Document this deviation
-> from the raw Dirichlet split in experimental notes.
-
 ---
 
 ### Phase 2: Model Loading and LoRA Fine-Tuning
@@ -205,14 +208,12 @@ Response : Yes, the sky appears blue due to Rayleigh scattering...
 python -m models.lora_finetune
 ```
 Applies LoRA (r=8) to the quantized model and runs one training epoch
-on 100 samples from client_000 (debug mode). Saves adapter to
-`results/lora_client_000/`.
+on client_000 data. Saves adapter to `results/lora_client_000/`.
 
 Expected output:
 ```
 Trainable params : 3,686,400  (0.217% of total)
 Avg loss    : ~2.07
-Steps run   : 25
 LoRA adapter saved → results/lora_client_000
 ```
 
@@ -225,25 +226,26 @@ LoRA adapter saved → results/lora_client_000
 python -m federated.fl_simulation
 ```
 
+> **Memory note:** The simulation uses a sequential load-once approach —
+> the model is loaded once (~6 GB) and LoRA weights are reset per client.
+> This replaces the original Flower/Ray `run_simulation` which attempted
+> 10 × 6 GB in parallel and OOM-crashed on 24 GB M4 Pro.
+
 **Config options in `fl_simulation.py`:**
 
 | Parameter | Current Value | Notes |
 |---|---|---|
-| `N_CLIENTS` | 2 | Scale up gradually: 2 → 5 → 10 → 100 |
-| `N_ROUNDS` | 1 | Increase in Phase 5 |
+| `N_CLIENTS` | 10 | All 10 clients run sequentially |
+| `N_ROUNDS` | 1 | Increase in Phase 6 if needed |
 | `DATASET` | "boolq" | Switch to "truthfulqa" when validated |
 
-> **Memory warning:** Do not set `N_CLIENTS > 5` without first verifying
-> memory usage. Each client loads a 6GB model. Ray is configured with
-> `num_cpus=4` per client to limit parallel execution to 1–2 clients at
-> a time.
+**Runtime:** ~6 hours on M4 Pro (10 clients, 8,887 total training samples, 1 epoch each).
 
-Expected output after 1 round (2 clients):
+Expected output after 1 round (10 clients):
 ```
-[APS] n=191, mean=0.4476, std=0.2024, min=0.0000, max=1.000
-[APS] n=191, mean=0.4618, std=0.1946, min=0.0062, max=1.000
-[Server] Global APS scores — n=382, mean=0.4547, std=0.1987
-[Server] Naive threshold (α=0.1) : 0.6905
+[Server] Global APS scores — n=1904, mean=0.4553, std=0.2599
+[Server] Naive threshold (α=0.1) : 0.7980
+[Server] Coverage target         : 90%
 ```
 
 Results saved to:
@@ -254,79 +256,24 @@ results/boolq_client_scores.json
 
 ---
 
-## Phase 4: Robust & Fair Aggregation (FR-FCLC Core)
+### Phase 4: Robust & Fair Aggregation (FR-FCLC Core)
 
-### Step 6 — Byzantine-robust threshold (trimmed quantile)
-
+**Step 6 — Byzantine-robust threshold (trimmed quantile)**
 ```bash
 python -m conformal.robust_aggregate
 ```
 
-Loads `results/boolq_client_scores.json` and runs a full comparison of
-naive vs trimmed quantile aggregation under honest and Byzantine attack settings.
-
-**Config options in `robust_aggregate.py`:**
-
-| Parameter | Value | Description |
-|---|---|---|
-| `ALPHA` | 0.1 | Miscoverage level (target coverage = 90%) |
-| `TRIM_FRACTION` | 0.15 | Fraction trimmed from each tail |
-| `BYZANTINE_FRACTION` | 0.30 | Fraction of clients simulated as Byzantine |
-
-**Attack modes:** `"inflate"` (scores near 1.0), `"deflate"` (scores near 0.0), `"random"`
-
-Expected output:
-```
-Honest naive threshold    : 0.6905
-Honest robust threshold   : 0.5765
-Byzantine naive threshold : 0.9908  (shift=0.3004)
-Byzantine robust threshold: 0.9797  (shift=0.4031)
-```
-
-> **Note on scale:** Trimmed quantile robustness is meaningful only at sufficient
-> client count. With 2 clients and 1 Byzantine (50% corruption), 15% trimming
-> cannot protect the threshold. At 100 clients with 30% Byzantine (30 clients),
-> trimming 15 from each tail eliminates all corrupted scores. Full robustness
-> demonstration is planned for Phase 5.
-
----
-
-### Step 7 — Fairness-aware per-client thresholds
-
+**Step 7 — Fairness-aware per-client thresholds**
 ```bash
 python -m conformal.fair_threshold
 ```
 
-Computes per-client thresholds using local calibration scores, with the
-robust global threshold as a floor. Reports coverage gap as the fairness metric.
-
-Expected output:
-```
-[Fair] Per-client taus    : client_1=0.7022, client_0=0.6725
-[Fair] Fair thresholds    : client_1=0.7022, client_0=0.6725
-[Fair] Coverage gap       : 0.0000 (FAIR)
-
-Client         Naive Coverage  Fair Coverage
---------------------------------------------
-client_000             0.7958         0.9058
-client_001             0.7749         0.9058
---------------------------------------------
-Coverage gap           0.0209         0.0000
-Gap reduction: 0.0209
-```
-
-Output saved to `results/fair_thresholds.json`.
-
----
-
-### Step 8 — Full FR-FCLC pipeline
-
+**Step 8 — Full FR-FCLC pipeline**
 ```bash
 python -m conformal.fr_fclc_pipeline
 ```
 
-Runs all 4 methods (naive, robust, fair, FR-FCLC) across 3 settings
-(honest, Byzantine inflate, Byzantine deflate) and generates plots.
+Runs all 4 methods across 3 settings and generates plots.
 
 **Methods compared:**
 
@@ -337,24 +284,85 @@ Runs all 4 methods (naive, robust, fair, FR-FCLC) across 3 settings
 | Fair | ✗ | ✅ Per-client threshold |
 | FR-FCLC | ✅ Trimmed quantile | ✅ Per-client threshold |
 
-**Phase 4 results summary (2 clients, 1 round):**
+**Phase 4 results (10 clients, 1 round):**
 
 | Setting | Method | Cov Mean | Cov Gap | Fair | ≥90% |
 |---|---|---|---|---|---|
-| Honest | Naive | 0.9031 | 0.0052 | ✓ | ✓ |
-| Honest | Robust | 0.7853 | 0.0209 | ✓ | ✗ |
-| Honest | Fair | 0.9058 | 0.0000 | ✓ | ✓ |
-| Honest | **FR-FCLC** | **0.9058** | **0.0000** | **✓** | **✓** |
-| Byzantine (inflate) | Naive | 0.9031 | 0.1309 | ✗ | ✓ |
-| Byzantine (inflate) | **FR-FCLC** | **0.9319** | **0.0524** | ✗ | ✓ |
-| Byzantine (deflate) | Naive | 0.9031 | 0.1937 | ✗ | ✓ |
-| Byzantine (deflate) | **FR-FCLC** | **0.9529** | **0.0942** | ✗ | ✓ |
+| Honest | Naive | 0.9007 | 0.0530 | ✗ | ✓ |
+| Honest | Robust | 0.7810 | 0.0852 | ✗ | ✗ |
+| Honest | Fair | 0.9076 | 0.0162 | ✓ | ✓ |
+| Honest | **FR-FCLC** | **0.9055** | **0.0005** | **✓** | **✓** |
+| Byzantine (inflate) | Naive | 0.9007 | 0.2791 | ✗ | ✓ |
+| Byzantine (inflate) | **FR-FCLC** | **0.9433** | **0.0632** | ✗ | ✓ |
+| Byzantine (deflate) | Naive | 0.9007 | 0.1737 | ✗ | ✓ |
+| Byzantine (deflate) | **FR-FCLC** | **0.9338** | **0.0947** | ✗ | ✓ |
 
 Outputs saved to:
 ```
 results/fr_fclc_results.json
 plots/coverage_comparison.png
 plots/coverage_gap.png
+```
+
+---
+
+### Phase 5: Full Evaluation
+
+**Step 9 — Multi-seed evaluation**
+```bash
+python -m experiments.run_all
+```
+Runs 4 methods × 3 settings × 5 random seeds. Outputs aggregated
+mean ± std summary table and saves per-seed results.
+
+**Step 10 — Byzantine robustness sweep**
+```bash
+python -m experiments.byzantine_simulation
+```
+Sweeps Byzantine fraction from 0% to 50% for both inflate and deflate
+attacks across 3 seeds. Generates two robustness plots.
+
+**Step 11 — Statistical significance tests**
+```bash
+python -m experiments.stats_analysis
+```
+Paired t-tests comparing FR-FCLC against each baseline on coverage_mean
+and coverage_gap across all settings. Requires `run_all.py` to run first.
+
+**Phase 5 results summary (mean ± std across 5 seeds):**
+
+| Setting | Method | Cov Mean | Cov Gap | Fair% | ≥90% |
+|---|---|---|---|---|---|
+| Honest | Naive | 0.9007 ± 0.0000 | 0.0530 ± 0.0000 | 0% | 100% |
+| Honest | Robust | 0.7810 ± 0.0000 | 0.0852 ± 0.0000 | 0% | 0% |
+| Honest | Fair | 0.9076 ± 0.0000 | 0.0162 ± 0.0000 | 100% | 100% |
+| Honest | **FR-FCLC** | **0.9055 ± 0.0000** | **0.0005 ± 0.0000** | **100%** | **100%** |
+| Byzantine inflate | Naive | 0.9007 ± 0.0001 | 0.2606 ± 0.0272 | 0% | 100% |
+| Byzantine inflate | Robust | 0.7811 ± 0.0003 | 0.6327 ± 0.0222 | 0% | 0% |
+| Byzantine inflate | Fair | 0.9453 ± 0.0013 | 0.0684 ± 0.0002 | 0% | 100% |
+| Byzantine inflate | **FR-FCLC** | **0.9417 ± 0.0014** | **0.0620 ± 0.0020** | **0%** | **100%** |
+| Byzantine deflate | Naive | 0.9007 ± 0.0001 | 0.1653 ± 0.0054 | 0% | 100% |
+| Byzantine deflate | Robust | 0.7809 ± 0.0002 | 0.3491 ± 0.0091 | 0% | 0% |
+| Byzantine deflate | Fair | 0.9338 ± 0.0001 | 0.0947 ± 0.0000 | 0% | 100% |
+| Byzantine deflate | **FR-FCLC** | **0.9338 ± 0.0001** | **0.0947 ± 0.0000** | **0%** | **100%** |
+
+**Statistical significance (FR-FCLC vs baselines, p < 0.05):**
+
+| Comparison | Coverage ↑ | Gap ↓ |
+|---|---|---|
+| FR-FCLC vs Naive | ✓ all settings | ✓ all settings |
+| FR-FCLC vs Robust | ✓ all settings | ✓ all settings |
+| FR-FCLC vs Fair (coverage) | ✗ comparable | — |
+| FR-FCLC vs Fair (gap) | — | ✓ honest + inflate |
+
+Outputs saved to:
+```
+results/run_all_results.json
+results/run_all_summary.json
+results/byzantine_results.json
+results/stats_analysis.json
+plots/byzantine_robustness_inflate.png
+plots/byzantine_robustness_deflate.png
 ```
 
 ---
@@ -392,27 +400,17 @@ python debug_tokenizer.py
 
 ---
 
-## Current Results Summary (Phase 4 Baseline — 2 clients, 1 round)
+## Key Findings
 
-### Phase 3: APS Calibration Scores
+1. **FR-FCLC achieves near-perfect fairness in honest setting** — coverage gap of 0.0005, 100× better than naive (0.053) and 30× better than fair-only (0.016).
 
-| Metric | Client 000 | Client 001 | Global |
-|---|---|---|---|
-| Calibration samples | 191 | 191 | 382 |
-| Mean APS score | 0.4476 | 0.4618 | 0.4547 |
-| Std APS score | 0.2024 | 0.1946 | 0.1987 |
-| Training samples | 454 | 2,036 | — |
-| Training loss | 1.92 | 1.80 | — |
-| Global threshold τ (α=0.1) | — | — | 0.6905 |
+2. **Robust method under-covers at 78.1%** with 10 clients — `TRIM_FRACTION=0.15` removes 30% of data, too aggressive at this scale. Expected to self-correct at 100 clients in Phase 6.
 
-### Phase 4: FR-FCLC Pipeline (Honest Setting)
+3. **FR-FCLC coverage gap is stable under inflate attacks** — jumps to ~0.063 at first Byzantine client then stays flat through 50% corruption, demonstrating graceful degradation.
 
-| Method | Coverage Mean | Coverage Gap | Fair | Meets ≥90% |
-|---|---|---|---|---|
-| Naive | 0.9031 | 0.0052 | ✓ | ✓ |
-| Robust | 0.7853 | 0.0209 | ✓ | ✗ |
-| Fair | 0.9058 | 0.0000 | ✓ | ✓ |
-| **FR-FCLC** | **0.9058** | **0.0000** | **✓** | **✓** |
+4. **Deflate attacks are indistinguishable from easy clients** — FR-FCLC and Fair produce identical results under deflate. Byzantine clients with near-zero scores receive 100% coverage, honest clients ~90.5%, gap = 9.47% regardless of method. This is an honest limitation of per-client threshold adjustment without Byzantine detection.
+
+5. **Statistically significant improvement over naive and robust** — paired t-tests confirm FR-FCLC outperforms both on coverage mean and coverage gap across all settings (p < 0.05).
 
 ---
 
@@ -420,19 +418,13 @@ python debug_tokenizer.py
 
 | Phase | Description | Status |
 |---|---|---|
-| Phase 5 | Scale to 10–100 clients, full evaluation across 5 seeds | Upcoming |
-| Phase 6 | Final report, plots, reproducibility check, submission | Not started |
+| Phase 6 | Final report, reproducibility check, submission | Not started |
 
 ---
 
-## Known Issues and Limitations
+## Known Limitations
 
-- **2-client limit:** Running more than 5 clients concurrently on M4 Pro
-  risks memory pressure. Scale up gradually and monitor Activity Monitor.
-- **Ray actor reloading:** Flower/Ray spawns new client actors for the
-  evaluate phase, causing the model to reload (~20 sec per client). This
-  is a known Flower virtual client limitation and not a code bug.
-- **TruthfulQA APS not validated:** Full-vocabulary APS for TruthfulQA
-  has not yet been tested at scale. Validation is planned for Phase 4.
-- **Single federated round:** Convergence behavior across multiple rounds
-  has not yet been assessed. Multi-round experiments are planned for Phase 5.
+- **Robust over-trims at 10 clients:** `TRIM_FRACTION=0.15` removes 570/1904 scores (30% total). At 100 clients the same fraction trims 15 from each tail while preserving the honest majority.
+- **Deflate indistinguishable from natural variation:** Per-client fairness adjustment cannot identify Byzantine low-scorers without an explicit detection mechanism.
+- **Single federated round:** Multi-round convergence behavior has not been assessed. Planned for Phase 6 if time permits.
+- **TruthfulQA not validated at scale:** Full-vocabulary APS for TruthfulQA has not been tested with 10+ clients.
