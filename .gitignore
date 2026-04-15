@@ -36,6 +36,19 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+~$*
+
+# Office / presentation files
+*.pptx
+*.ppt
+*.key
+
+# Local Drive results copy
+fr-fclc-results/
+
+# Paper and notebook (managed separately)
+paper/
+*.ipynb
 
 # Conda
 .conda/
